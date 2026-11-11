@@ -1,0 +1,368 @@
+-- =================================================================
+-- +1 GUN FORGE | REDROSE HUB (NATIVE AUTO-AIM HOOK & AUTO-FARM)
+-- =================================================================
+
+local success, Rayfield = pcall(function()
+    return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+end)
+
+if not success or not Rayfield then
+    warn("Gagal memuat Rayfield UI Library!")
+    return
+end
+
+local Window = Rayfield:CreateWindow({
+    Name = "+1 Gun Forge | RedRose HUB Native",
+    LoadingTitle = "Memuat Modul Native Aim...",
+    LoadingSubtitle = "By RedRose",
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "GunForgeHubNative",
+        FileName = "NativeConfig"
+    },
+    KeySystem = false,
+})
+
+-- Tab Utama
+local MainTab = Window:CreateTab("Main & Combat", 4483362458)
+local FarmTab = Window:CreateTab("Auto-Farm & Native Aim", 4483362458)
+local PlayerTab = Window:CreateTab("Player & Movement", 4483362458)
+
+-- Variabel Status & Konfigurasi
+local infiniteAmmoEnabled = false
+local customMagazineSize = 999
+local damageMultiplier = 1
+
+-- Variabel Auto-Farm & Native Aim Hook
+local autoFarmEnabled = false
+local nativeAimHookEnabled = false
+local farmMode = "Behind" -- Behind, Above, Under, Orbit
+local farmDistance = 5 
+local orbitSpeed = 2
+local currentOrbitAngle = 0
+
+-- Variabel Player Movement
+local walkSpeedEnabled = false
+local customWalkSpeed = 16
+local infJumpEnabled = false
+local hipHeightEnabled = false
+local customHipHeight = 0
+
+-- Layanan & RemoteReferences
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local localPlayer = Players.LocalPlayer
+
+local plusPlus = ReplicatedStorage:WaitForChild("PlusPlus", 5)
+local remotes = plusPlus:WaitForChild("Remotes")
+local requestFireEvent = remotes:WaitForChild("RequestFire")
+
+-- =================================================================
+-- 1. INFINITE AMMO BYPASS (MEMORY HOOK)
+-- =================================================================
+task.spawn(function()
+    while task.wait(0.2) do
+        if infiniteAmmoEnabled then
+            pcall(function()
+                for _, v in pairs(getgc(true)) do
+                    if type(v) == "function" then
+                        local env = getfenv(v)
+                        if env and env.script and env.script.Name == "AmmoController" then
+                            for i = 1, 10 do
+                                local succ, val = pcall(debug.getupvalue, v, i)
+                                if succ and type(val) == "number" then
+                                    if val > 0 and val <= 200 then
+                                        debug.setupvalue(v, i, customMagazineSize)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                
+                local char = localPlayer.Character
+                if char then
+                    for _, tool in ipairs(char:GetChildren()) do
+                        if tool:IsA("Tool") then
+                            tool:SetAttribute("Ammo", customMagazineSize)
+                            tool:SetAttribute("Reloading", false)
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+-- =================================================================
+-- 2. HOOK SETTINGS AUTO-AIM BAWAAN GAME (SUPAYA IKUT LOCKING ASLI)
+-- =================================================================
+task.spawn(function()
+    pcall(function()
+        for _, v in pairs(getgc(true)) do
+            if type(v) == "table" and rawget(v, "Set") and rawget(v, "Setting") then
+                -- Memaksa setting AutoAim internal game menjadi true agar fitur bawaan game aktif terus
+                v.Set("AutoAim", true)
+            end
+        end
+    end)
+end)
+
+-- =================================================================
+-- 3. PENCARIAN MUSUH TERDEKAT (UNTUK AUTO-FARM TELEPORT)
+-- =================================================================
+local function GetClosestTargetModel()
+    local enemyFolder = Workspace:FindFirstChild("EnemyFolder")
+    if not enemyFolder then return nil end
+    
+    local char = localPlayer.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
+    local rootPos = char.HumanoidRootPart.Position
+    
+    local closestModel = nil
+    local shortestDist = math.huge
+    
+    for _, enemyModel in ipairs(enemyFolder:GetChildren()) do
+        if enemyModel:IsA("Model") then
+            local enemyId = enemyModel:GetAttribute("EnemyId")
+            local hp = tonumber(enemyModel:GetAttribute("Hp")) or 0
+            
+            if enemyId and hp > 0 then
+                local primaryPart = enemyModel:FindFirstChild("HumanoidRootPart") or enemyModel.PrimaryPart
+                if primaryPart then
+                    local dist = (primaryPart.Position - rootPos).Magnitude
+                    if dist < shortestDist then
+                        shortestDist = dist
+                        closestModel = enemyModel
+                    end
+                end
+            end
+        end
+    end
+    return closestModel
+end
+
+-- =================================================================
+-- 4. AUTO-FARM TELEPORT & NATIVE AIM SYNC
+-- =================================================================
+RunService.RenderStepped:Connect(function(dt)
+    pcall(function()
+        local char = localPlayer.Character
+        if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+        local hrp = char.HumanoidRootPart
+        
+        -- Loop WalkSpeed & Physics Mod
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            if walkSpeedEnabled then
+                humanoid.WalkSpeed = customWalkSpeed
+            end
+            if hipHeightEnabled then
+                humanoid.HipHeight = customHipHeight
+            end
+        end
+
+        -- Auto-Farm Logic & Native Fire Synchronization
+        if autoFarmEnabled then
+            local targetModel = GetClosestTargetModel()
+            if targetModel then
+                local tPart = targetModel:FindFirstChild("HumanoidRootPart") or targetModel.PrimaryPart
+                if tPart then
+                    local targetCFrame = tPart.CFrame
+                    local desiredCFrame = targetCFrame
+                    
+                    -- Posisi Farm
+                    if farmMode == "Behind" then
+                        desiredCFrame = targetCFrame * CFrame.new(0, 0, farmDistance)
+                    elseif farmMode == "Above" then
+                        desiredCFrame = targetCFrame * CFrame.new(0, farmDistance, 0)
+                    elseif farmMode == "Under" then
+                        desiredCFrame = targetCFrame * CFrame.new(0, -farmDistance, 0)
+                    elseif farmMode == "Orbit" then
+                        currentOrbitAngle = currentOrbitAngle + (orbitSpeed * dt)
+                        local x = math.cos(currentOrbitAngle) * farmDistance
+                        local z = math.sin(currentOrbitAngle) * farmDistance
+                        desiredCFrame = targetCFrame * CFrame.new(x, 2, z)
+                    end
+                    
+                    -- Teleport mulus ke dekat musuh agar sistem AimAssist bawaan game mendeteksinya di dalam range
+                    hrp.CFrame = CFrame.new(desiredCFrame.Position, targetCFrame.Position)
+                    
+                    -- Jika Native Aim Hook diaktifkan, tembak menggunakan ID asli musuh
+                    if nativeAimHookEnabled then
+                        local enemyId = targetModel:GetAttribute("EnemyId")
+                        if enemyId then
+                            requestFireEvent:FireServer(enemyId, tPart.CFrame, damageMultiplier)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end)
+
+-- =================================================================
+-- 5. INFINITE JUMP
+-- =================================================================
+UserInputService.JumpRequest:Connect(function()
+    if infJumpEnabled then
+        pcall(function()
+            local char = localPlayer.Character
+            local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+        end)
+    end
+end)
+
+-- ====================
+-- TAB MAIN & COMBAT
+-- ====================
+MainTab:CreateSection("Weapon & Ammo Bypass")
+
+MainTab:CreateToggle({
+    Name = "Infinite Ammo & Bypass Magazine Size",
+    CurrentValue = false,
+    Flag = "InfAmmoToggle",
+    Callback = function(Value)
+        infiniteAmmoEnabled = Value
+    end,
+})
+
+MainTab:CreateSlider({
+    Name = "Damage Multiplier",
+    Range = {1, 100},
+    Increment = 1,
+    CurrentValue = 1,
+    Flag = "DmgMultiSlider",
+    Callback = function(Value)
+        damageMultiplier = Value
+    end,
+})
+
+-- ====================
+-- TAB AUTO-FARM & NATIVE AIM
+-- ====================
+FarmTab:CreateSection("Auto-Farm Teleport & Native Aim")
+
+FarmTab:CreateToggle({
+    Name = "Aktifkan Auto-Farm Teleport",
+    CurrentValue = false,
+    Flag = "AutoFarmToggle",
+    Callback = function(Value)
+        autoFarmEnabled = Value
+        Rayfield:Notify({Title = "Auto-Farm", Content = "Status: " .. tostring(Value), Duration = 2})
+    end,
+})
+
+FarmTab:CreateToggle({
+    Name = "Aktifkan Native Aim Hook (Sync Game AimAssist)",
+    CurrentValue = true,
+    Flag = "NativeAimToggle",
+    Callback = function(Value)
+        nativeAimHookEnabled = Value
+    end,
+})
+
+FarmTab:CreateDropdown({
+    Name = "Posisi Farm (Mode)",
+    Options = {"Behind", "Above", "Under", "Orbit"},
+    CurrentOption = "Behind",
+    Flag = "FarmModeDrop",
+    Callback = function(Option)
+        farmMode = Option[1]
+    end,
+})
+
+FarmTab:CreateSlider({
+    Name = "Jarak / Radius (Saran: 5-15 Stud)",
+    Range = {2, 20},
+    Increment = 1,
+    CurrentValue = 5,
+    Flag = "FarmDistSlider",
+    Callback = function(Value)
+        farmDistance = Value
+    end,
+})
+
+FarmTab:CreateSlider({
+    Name = "Kecepatan Orbit",
+    Range = {1, 10},
+    Increment = 0.5,
+    CurrentValue = 2,
+    Flag = "OrbitSpeedSlider",
+    Callback = function(Value)
+        orbitSpeed = Value
+    end,
+})
+
+-- ====================
+-- TAB PLAYER & MOVEMENT
+-- ====================
+PlayerTab:CreateSection("Movement & Physics Mods")
+
+PlayerTab:CreateToggle({
+    Name = "Loop WalkSpeed (Custom Speed)",
+    CurrentValue = false,
+    Flag = "WalkSpeedToggle",
+    Callback = function(Value)
+        walkSpeedEnabled = Value
+    end,
+})
+
+PlayerTab:CreateSlider({
+    Name = "Nilai WalkSpeed",
+    Range = {16, 100},
+    Increment = 2,
+    CurrentValue = 16,
+    Flag = "WalkSpeedSlider",
+    Callback = function(Value)
+        customWalkSpeed = Value
+    end,
+})
+
+PlayerTab:CreateToggle({
+    Name = "Infinite Jump (Loncat Terus di Udara)",
+    CurrentValue = false,
+    Flag = "InfJumpToggle",
+    Callback = function(Value)
+        infJumpEnabled = Value
+    end,
+})
+
+PlayerTab:CreateToggle({
+    Name = "Custom HipHeight (Melayang/Tinggi Badan)",
+    CurrentValue = false,
+    Flag = "HipHeightToggle",
+    Callback = function(Value)
+        hipHeightEnabled = Value
+        if not Value then
+            local char = localPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.HipHeight = 0 end
+        end
+    end,
+})
+
+PlayerTab:CreateSlider({
+    Name = "Nilai HipHeight",
+    Range = {0, 20},
+    Increment = 0.5,
+    CurrentValue = 0,
+    Flag = "HipHeightSlider",
+    Callback = function(Value)
+        customHipHeight = Value
+    end,
+})
+
+-- Selesai Loading
+Rayfield:LoadConfiguration()
+Rayfield:Notify({
+    Title = "RedRose HUB Native Loaded!",
+    Content = "Auto-Farm & Native AimAssist Sync aktif.",
+    Duration = 5,
+})
